@@ -30,14 +30,16 @@
       tags:
         - backup
 
+    - bigip_command:
+        commands: tmsh show sys failover | grep -o "Failover active"
+        provider: "{{ provider }}"
+      delegate_to: localhost
+      register: failover_state
+      tags:
+        - sync
+
     - name: sync configuration from device to group
       block:
-        - bigip_command:
-            commands: tmsh show sys failover | grep -o "Failover active"
-            provider: "{{ provider }}"
-          delegate_to: localhost
-          register: failover_state
-
         - name: Before HA SYNC
           ansible.builtin.debug:
               var: failover_state
