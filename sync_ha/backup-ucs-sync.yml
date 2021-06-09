@@ -10,66 +10,57 @@
     dg_name: "{{ device_group }}"
 
   tasks:
-    - name: set current timestring
-      shell: date +%Y%m%d%H%M%S
-      register: ts
-      run_once: true
-      delegate_to: localhost
-      tags:
-        - backup
-
     - ping:
       delegate_to: localhost
-      tags:
-        - sync
-        - backup
+      tags: always
 
-    - name: download ucs file
-      bigip_ucs_fetch:
-        src: /var/local/ucs/config-{{ ts.stdout }}.ucs
-        dest: "{{ target }}/config-{{ inventory_hostname }}-{{ ts.stdout }}.ucs"
-        provider:
-          server: "{{ inventory_hostname }}"
-          user: admin
-          password: P@ssw0rd123
-          validate_certs: False
+    - name: backup bigip configuration via ucs
+      block:
+        - name: set current timestring
+          shell: date +%Y%m%d%H%M%S
+          register: ts
+          run_once: true
+
+        - name: download ucs file
+          bigip_ucs_fetch:
+            src: /var/local/ucs/config-{{ ts.stdout }}.ucs
+            dest: "{{ backup_target }}/config-{{ inventory_hostname }}-{{ ts.stdout }}.ucs"
+            provider: "{{ provider }}"
       delegate_to: localhost
       tags:
         - backup
 
-    - bigip_command:
-        commands: tmsh show sys failover | grep -o "Failover active"
-        provider: "{{ provider }}"
-      delegate_to: localhost
-      register: failover_state
-      tags:
-        - sync
+    - name: sync configuration from device to group
+      block:
+        - bigip_command:
+            commands: tmsh show sys failover | grep -o "Failover active"
+            provider: "{{ provider }}"
+          delegate_to: localhost
+          register: failover_state
 
-    - block:
+        - name: Before HA SYNC
+          ansible.builtin.debug:
+              var: failover_state
 
-      - name: Before HA SYNC
-        ansible.builtin.debug:
-            var: failover_state
+        - name: Device Group
+          ansible.builtin.debug:
+              msg: "The HA device group is {{ dg_name }}"
 
-      - name: Device Group
-        ansible.builtin.debug:
-            msg: "The HA device group is {{ dg_name }}"
+        - name: Save the running configuration to disk
+          bigip_config:
+            provider: "{{ provider }}"
+            save: yes
 
-      - name: Save the running configuration to disk
-        bigip_config:
-          provider: "{{ provider }}"
-          save: yes
+        - name: Sync configuration from device to group
+          bigip_configsync_action:
+            provider: "{{ provider }}"
+            device_group: "{{ dg_name }}"
+            sync_device_to_group: yes
+          register: sync_state
 
-      - name: Sync configuration from device to group
-        bigip_configsync_action:
-          provider: "{{ provider }}"
-          device_group: "{{ dg_name }}"
-          sync_device_to_group: yes
-        register: sync_state
-
-      - name: After HA SYNC
-        ansible.builtin.debug:
-            var: sync_state
+        - name: After HA SYNC
+          ansible.builtin.debug:
+              var: sync_state
 
       when:
         - failover_state.stdout is defined
